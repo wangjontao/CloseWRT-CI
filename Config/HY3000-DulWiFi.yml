@@ -1,0 +1,340 @@
+# SPDX-License-Identifier: MIT
+# HY3000 DulWiFi custom build based on VIKINGYFY/CloseWRT-CI workflow style.
+
+name: HY3000-DulWiFi
+
+on:
+  workflow_dispatch:
+    inputs:
+      TEST:
+        description: '仅输出配置文件，不编译固件'
+        default: 'false'
+        required: false
+        type: boolean
+
+permissions: write-all
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  WRT_CONFIG: HY3000
+  WRT_THEME: aurora
+  WRT_NAME: DulWiFi
+  WRT_SSID: DulWiFi
+  WRT_WORD: password
+  WRT_IP: 192.168.9.1
+  WRT_PW: password
+  WRT_REPO: https://github.com/Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly.git
+  WRT_BRANCH: openwrt-24.10-6.6
+  WRT_SOURCE: Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly
+  WRT_TEST: ${{ inputs.TEST }}
+
+jobs:
+  build:
+    name: HY3000-DulWiFi
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Projects
+        uses: actions/checkout@main
+
+      - name: Initialization Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt -yqq purge firefox || true
+          sudo -E apt -yqq update
+          sudo -E apt -yqq full-upgrade
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo -E apt -yqq install dos2unix libfuse-dev openssl jq
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo -E systemctl daemon-reload
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          sudo mkdir -p /mnt/build_wrt
+          sudo chown $USER:$USER /mnt/build_wrt
+          ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+
+      - name: Setup Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Initialization Values
+        run: |
+          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
+          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
+          echo "WRT_TARGET=mediatek" >> $GITHUB_ENV
+          echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
+          echo "WRT_KVER=none" >> $GITHUB_ENV
+          echo "WRT_LIST=none" >> $GITHUB_ENV
+
+      - name: Clone Code
+        run: |
+          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
+          cd ./wrt/
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          if [ ! -d "defconfig" ]; then
+            echo "defconfig directory not found, stopping workflow."
+            exit 1
+          fi
+          PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
+          if [ -f "$PROJECT_MIRRORS_FILE" ]; then
+            sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
+          fi
+
+      - name: Check Scripts
+        run: |
+          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\|yml\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+
+      - name: Update Feeds
+        run: |
+          cd ./wrt/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Custom Packages
+        run: |
+          cd ./wrt/package/
+
+          # 先执行原仓库扩展包脚本，保证 HomeProxy/OpenClash/主题等仍按原逻辑拉取。
+          $GITHUB_WORKSPACE/Scripts/Packages.sh
+
+          # 再固定替换 PassWall / PassWall2 版本，避免 main 分支变化导致编译不稳定。
+          echo "Replace PassWall with fixed tag 26.3.6-1"
+          echo "Replace PassWall2 with fixed tag 26.3.5-1"
+          find ./ ../feeds/luci/ ../feeds/packages/ -maxdepth 4 -type d \( -iname "*passwall*" -o -iname "*passwall2*" \) -prune -exec rm -rf {} + 2>/dev/null || true
+
+          git clone --depth=1 --single-branch --branch "26.3.6-1" "https://github.com/Openwrt-Passwall/openwrt-passwall.git" ./openwrt-passwall-fixed
+          find ./openwrt-passwall-fixed/*/ -maxdepth 3 -type d -iname "*passwall*" -prune -exec cp -rf {} ./ \;
+          rm -rf ./openwrt-passwall-fixed
+
+          git clone --depth=1 --single-branch --branch "26.3.5-1" "https://github.com/Openwrt-Passwall/openwrt-passwall2.git" ./openwrt-passwall2-fixed
+          find ./openwrt-passwall2-fixed/*/ -maxdepth 3 -type d -iname "*passwall2*" -prune -exec cp -rf {} ./ \;
+          rm -rf ./openwrt-passwall2-fixed
+
+          # 集成 NPS 服务端和 LuCI 界面。
+          echo "Add luci-app-nps / nps"
+          rm -rf ./nps-openwrt ./luci-app-nps ./nps ../feeds/luci/applications/luci-app-nps ../feeds/packages/net/nps 2>/dev/null || true
+          git clone --depth=1 "https://github.com/djylb/nps-openwrt.git" ./nps-openwrt
+          cp -rf ./nps-openwrt/luci-app-nps ./
+          cp -rf ./nps-openwrt/nps ./
+          rm -rf ./nps-openwrt
+
+          $GITHUB_WORKSPACE/Scripts/Handles.sh
+
+      - name: Custom Settings
+        run: |
+          cd ./wrt/
+
+          # 重新生成 .config，避免源码仓库自带/上次残留配置把设备选成 abt_asr3000 等其它型号。
+          rm -f .config
+          touch .config
+          cat $GITHUB_WORKSPACE/Config/HY3000.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
+
+          $GITHUB_WORKSPACE/Scripts/Settings.sh
+
+          # 最后强制只保留 HY3000 单设备配置。GENERAL.txt 默认是多设备，这里必须覆盖。
+          sed -i '/^CONFIG_TARGET_MULTI_PROFILE/d' .config
+          sed -i '/^CONFIG_TARGET_PER_DEVICE_ROOTFS/d' .config
+          sed -i '/^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_/d' .config
+          cat >> .config <<'EOT'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_philips_hy3000=y
+          # CONFIG_TARGET_MULTI_PROFILE is not set
+          # CONFIG_TARGET_PER_DEVICE_ROOTFS is not set
+          EOT
+
+          # 设置后台/root 密码为 password。原仓库 WRT_PW 只写 Release 说明，不会真正改系统密码。
+          HASH="$(openssl passwd -1 "$WRT_PW")"
+          mkdir -p ./package/base-files/files/etc
+          SHADOW="./package/base-files/files/etc/shadow"
+          if [ -f "$SHADOW" ]; then
+            sed -i "s#^root:[^:]*:#root:${HASH}:#" "$SHADOW"
+          else
+            echo "root:${HASH}:0:0:99999:7:::" > "$SHADOW"
+          fi
+
+          # 双保险：首次启动再次写入 hostname / LAN IP。
+          mkdir -p ./package/base-files/files/etc/uci-defaults
+          cat > ./package/base-files/files/etc/uci-defaults/99-dulwifi <<'EOT'
+          #!/bin/sh
+          uci -q set system.@system[0].hostname='DulWiFi'
+          uci -q commit system
+          uci -q set network.lan.ipaddr='192.168.9.1'
+          uci -q commit network
+          exit 0
+          EOT
+          chmod +x ./package/base-files/files/etc/uci-defaults/99-dulwifi
+
+          # NPS 首次开机自动配置：读取 WAN 口 MAC，生成大写去冒号 vkey，写入服务端信息并启动。
+          # /etc/uci-defaults 脚本只在首次启动执行，成功后系统会自动删除。
+          cat > ./package/base-files/files/etc/uci-defaults/99-nps-autoconfig <<'EOT'
+          #!/bin/sh
+
+          if [ -f /etc/config/nps ] && [ -x /etc/init.d/nps ]; then
+
+              sleep 5
+
+              echo "Start configure NPS..."
+
+              WAN_DEV="$(uci -q get network.wan.device)"
+
+              if [ -z "$WAN_DEV" ]; then
+                  WAN_DEV="$(ip route 2>/dev/null | awk '/default/ {print $5; exit}')"
+              fi
+
+              echo "WAN_DEV=$WAN_DEV"
+
+              WAN_MAC=""
+
+              if [ -n "$WAN_DEV" ] && [ -f "/sys/class/net/$WAN_DEV/address" ]; then
+                  WAN_MAC="$(cat /sys/class/net/$WAN_DEV/address)"
+              fi
+
+              # PPPoE 或虚拟接口场景：读取 lower_* 真实物理网卡 MAC。
+              if [ -z "$WAN_MAC" ] || [ "$WAN_MAC" = "00:00:00:00:00:00" ]; then
+                  LOWER_DEV="$(basename "$(readlink -f /sys/class/net/$WAN_DEV/lower_* 2>/dev/null)" 2>/dev/null)"
+
+                  if [ -n "$LOWER_DEV" ] && [ -f "/sys/class/net/$LOWER_DEV/address" ]; then
+                      WAN_MAC="$(cat /sys/class/net/$LOWER_DEV/address)"
+                      echo "Use lower device MAC: $LOWER_DEV"
+                  fi
+              fi
+
+              # 兜底：有些固件首次启动时 WAN 还没绑定好，用 lan/br-lan MAC 避免 vkey 为空。
+              if [ -z "$WAN_MAC" ] || [ "$WAN_MAC" = "00:00:00:00:00:00" ]; then
+                  LAN_DEV="$(uci -q get network.lan.device)"
+                  [ -z "$LAN_DEV" ] && LAN_DEV="br-lan"
+                  if [ -f "/sys/class/net/$LAN_DEV/address" ]; then
+                      WAN_MAC="$(cat /sys/class/net/$LAN_DEV/address)"
+                      echo "Fallback to LAN device MAC: $LAN_DEV"
+                  fi
+              fi
+
+              if [ -n "$WAN_MAC" ] && [ "$WAN_MAC" != "00:00:00:00:00:00" ]; then
+
+                  echo "WAN MAC=$WAN_MAC"
+
+                  NPS_KEY="$(echo "$WAN_MAC" | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+
+                  echo "NPS KEY=$NPS_KEY"
+
+                  # luci-app-nps 当前配置键是 enable；同时写 enabled 兼容旧包/旧配置。
+                  uci -q set nps.@nps[0].enable='1'
+                  uci -q set nps.@nps[0].enabled='1'
+                  uci -q set nps.@nps[0].server_addr='47.83.9.208'
+                  uci -q set nps.@nps[0].server_port='8024'
+                  uci -q set nps.@nps[0].protocol='tcp'
+                  uci -q set nps.@nps[0].compress='1'
+                  uci -q set nps.@nps[0].crypt='1'
+                  uci -q set nps.@nps[0].vkey="$NPS_KEY"
+
+                  uci -q commit nps
+
+                  /etc/init.d/nps enable
+                  /etc/init.d/nps restart
+
+                  echo "NPS configured successfully"
+
+              else
+
+                  echo "ERROR: WAN MAC not found"
+
+              fi
+
+          fi
+
+          exit 0
+          EOT
+          chmod +x ./package/base-files/files/etc/uci-defaults/99-nps-autoconfig
+
+          make defconfig -j$(nproc)
+
+          echo "Selected target device:"
+          grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_.*=y' .config || true
+          if ! grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_philips_hy3000=y' .config; then
+            echo "ERROR: HY3000 profile is not selected after defconfig."
+            exit 1
+          fi
+
+          make clean -j$(nproc)
+
+      - name: Download Packages
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make download -j$(nproc)
+
+      - name: Compile Firmware
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Machine Information
+        run: |
+          cd ./wrt/
+          echo "======================="
+          lscpu | grep -E "name|Core|Thread" || true
+          echo "======================="
+          df -h
+          echo "======================="
+          du -h --max-depth=1 || true
+          echo "======================="
+
+      - name: Package Firmware
+        run: |
+          cd ./wrt/
+          mkdir -p ./upload/
+          cp -f ./.config ./upload/Config-HY3000-DulWiFi-$WRT_DATE.txt
+          if [[ $WRT_TEST != 'true' ]]; then
+            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n1)" >> $GITHUB_ENV
+            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+            # 保存实际输出文件列表，方便排查文件名是否是 hy3000 / philips / asr3000。
+            find ./bin/targets/ -type f | sort > ./upload/output-file-list.txt
+
+            # 不再只按 *hy3000* / *philips* 过滤。部分源码会把 HY3000 兼容镜像命名为 abt_asr3000，
+            # 旧过滤规则会漏拷贝固件，导致 Release 里只有 config/manifest。
+            find ./bin/targets/ -type f \( \
+              -iname "*.bin" -o \
+              -iname "*.itb" -o \
+              -iname "*.img" -o \
+              -iname "*.img.gz" -o \
+              -iname "*.tar" -o \
+              -iname "*.tar.gz" -o \
+              -iname "*.ubi" -o \
+              -iname "*.manifest" -o \
+              -iname "sha256sums" \
+            \) -exec cp -f {} ./upload/ \; || true
+
+            echo "Upload files:"
+            ls -lh ./upload/
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HY3000-DulWiFi
+          path: ./wrt/upload/*
+
+      - name: Release Firmware
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: HY3000-DulWiFi-${{ env.WRT_DATE }}
+          files: ./wrt/upload/*
+          body: |
+            HY3000 / Philips HY3000 / MT7981 单设备固件
+            源码：${{ env.WRT_REPO }}
+            分支：${{ env.WRT_BRANCH }}
+            提交：${{ env.WRT_HASH }}
+            登录地址：${{ env.WRT_IP }}
+            登录密码：${{ env.WRT_PW }}
+            WIFI名称：${{ env.WRT_SSID }}
+            WIFI密码：${{ env.WRT_WORD }}
+            主机名：${{ env.WRT_NAME }}
+            插件：PassWall 26.3.6-1 / PassWall2 26.3.5-1 / HomeProxy / OpenClash / luci-app-nps
+            内核版本：${{ env.WRT_KVER }}
+            Luci插件列表：${{ env.WRT_LIST }}
