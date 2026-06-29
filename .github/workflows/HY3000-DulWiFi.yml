@@ -1,0 +1,201 @@
+# SPDX-License-Identifier: MIT
+# HY3000 DulWiFi custom build based on VIKINGYFY/CloseWRT-CI workflow style.
+
+name: HY3000-DulWiFi
+
+on:
+  workflow_dispatch:
+    inputs:
+      TEST:
+        description: '仅输出配置文件，不编译固件'
+        default: 'false'
+        required: false
+        type: boolean
+
+permissions: write-all
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  WRT_CONFIG: HY3000
+  WRT_THEME: aurora
+  WRT_NAME: DulWiFi
+  WRT_SSID: DulWiFi
+  WRT_WORD: password
+  WRT_IP: 192.168.9.1
+  WRT_PW: password
+  WRT_REPO: https://github.com/Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly.git
+  WRT_BRANCH: openwrt-24.10-6.6
+  WRT_SOURCE: Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly
+  WRT_TEST: ${{ inputs.TEST }}
+
+jobs:
+  build:
+    name: HY3000-DulWiFi
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Projects
+        uses: actions/checkout@main
+
+      - name: Initialization Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt -yqq purge firefox || true
+          sudo -E apt -yqq update
+          sudo -E apt -yqq full-upgrade
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo -E apt -yqq install dos2unix libfuse-dev openssl jq
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo -E systemctl daemon-reload
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          sudo mkdir -p /mnt/build_wrt
+          sudo chown $USER:$USER /mnt/build_wrt
+          ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+
+      - name: Setup Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Initialization Values
+        run: |
+          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
+          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
+          echo "WRT_TARGET=mediatek" >> $GITHUB_ENV
+          echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
+          echo "WRT_KVER=none" >> $GITHUB_ENV
+          echo "WRT_LIST=none" >> $GITHUB_ENV
+
+      - name: Clone Code
+        run: |
+          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
+          cd ./wrt/
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          if [ ! -d "defconfig" ]; then
+            echo "defconfig directory not found, stopping workflow."
+            exit 1
+          fi
+          PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
+          if [ -f "$PROJECT_MIRRORS_FILE" ]; then
+            sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
+          fi
+
+      - name: Check Scripts
+        run: |
+          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\|yml\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+
+      - name: Update Feeds
+        run: |
+          cd ./wrt/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Custom Packages
+        run: |
+          cd ./wrt/package/
+          $GITHUB_WORKSPACE/Scripts/Packages.sh
+          $GITHUB_WORKSPACE/Scripts/Handles.sh
+
+      - name: Custom Settings
+        run: |
+          cd ./wrt/
+          cat $GITHUB_WORKSPACE/Config/HY3000.txt $GITHUB_WORKSPACE/Config/GENERAL.txt $GITHUB_WORKSPACE/Config/PRIVATE.txt >> .config
+
+          # 覆盖多设备配置，强制单 HY3000，避免生成 MT7981 全设备包。
+          sed -i '/CONFIG_TARGET_MULTI_PROFILE/d' .config
+          sed -i '/CONFIG_TARGET_PER_DEVICE_ROOTFS/d' .config
+          echo '# CONFIG_TARGET_MULTI_PROFILE is not set' >> .config
+          echo '# CONFIG_TARGET_PER_DEVICE_ROOTFS is not set' >> .config
+
+          $GITHUB_WORKSPACE/Scripts/Settings.sh
+
+          # 设置后台/root 密码为 password。原仓库 WRT_PW 只写 Release 说明，不会真正改系统密码。
+          HASH="$(openssl passwd -1 "$WRT_PW")"
+          mkdir -p ./package/base-files/files/etc
+          SHADOW="./package/base-files/files/etc/shadow"
+          if [ -f "$SHADOW" ]; then
+            sed -i "s#^root:[^:]*:#root:${HASH}:#" "$SHADOW"
+          else
+            echo "root:${HASH}:0:0:99999:7:::" > "$SHADOW"
+          fi
+
+          # 双保险：首次启动再次写入 hostname / LAN IP。
+          mkdir -p ./package/base-files/files/etc/uci-defaults
+          cat > ./package/base-files/files/etc/uci-defaults/99-dulwifi <<'EOT'
+          #!/bin/sh
+          uci -q set system.@system[0].hostname='DulWiFi'
+          uci -q commit system
+          uci -q set network.lan.ipaddr='192.168.9.1'
+          uci -q commit network
+          exit 0
+          EOT
+          chmod +x ./package/base-files/files/etc/uci-defaults/99-dulwifi
+
+          make defconfig -j$(nproc)
+          make clean -j$(nproc)
+
+      - name: Download Packages
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make download -j$(nproc)
+
+      - name: Compile Firmware
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Machine Information
+        run: |
+          cd ./wrt/
+          echo "======================="
+          lscpu | grep -E "name|Core|Thread" || true
+          echo "======================="
+          df -h
+          echo "======================="
+          du -h --max-depth=1 || true
+          echo "======================="
+
+      - name: Package Firmware
+        run: |
+          cd ./wrt/
+          mkdir -p ./upload/
+          cp -f ./.config ./upload/Config-HY3000-DulWiFi-$WRT_DATE.txt
+          if [[ $WRT_TEST != 'true' ]]; then
+            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n1)" >> $GITHUB_ENV
+            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+            find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
+            find ./bin/targets/ -type f -iname "*hy3000*" -exec cp -f {} ./upload/ \; || true
+            find ./bin/targets/ -type f -iname "*philips*" -exec cp -f {} ./upload/ \; || true
+            find ./bin/targets/ -type f -name "*.manifest" -exec cp -f {} ./upload/ \; || true
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HY3000-DulWiFi
+          path: ./wrt/upload/*
+
+      - name: Release Firmware
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: HY3000-DulWiFi-${{ env.WRT_DATE }}
+          files: ./wrt/upload/*
+          body: |
+            HY3000 / Philips HY3000 / MT7981 单设备固件
+            源码：${{ env.WRT_REPO }}
+            分支：${{ env.WRT_BRANCH }}
+            提交：${{ env.WRT_HASH }}
+            登录地址：${{ env.WRT_IP }}
+            登录密码：${{ env.WRT_PW }}
+            WIFI名称：${{ env.WRT_SSID }}
+            WIFI密码：${{ env.WRT_WORD }}
+            主机名：${{ env.WRT_NAME }}
+            插件：PassWall / PassWall2 / HomeProxy / OpenClash
+            内核版本：${{ env.WRT_KVER }}
+            Luci插件列表：${{ env.WRT_LIST }}
