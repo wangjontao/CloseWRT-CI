@@ -97,7 +97,31 @@ jobs:
       - name: Custom Packages
         run: |
           cd ./wrt/package/
+
+          # 先执行原仓库扩展包脚本，保证 HomeProxy/OpenClash/主题等仍按原逻辑拉取。
           $GITHUB_WORKSPACE/Scripts/Packages.sh
+
+          # 再固定替换 PassWall / PassWall2 版本，避免 main 分支变化导致编译不稳定。
+          echo "Replace PassWall with fixed tag 26.3.6-1"
+          echo "Replace PassWall2 with fixed tag 26.3.5-1"
+          find ./ ../feeds/luci/ ../feeds/packages/ -maxdepth 4 -type d \( -iname "*passwall*" -o -iname "*passwall2*" \) -prune -exec rm -rf {} + 2>/dev/null || true
+
+          git clone --depth=1 --single-branch --branch "26.3.6-1" "https://github.com/Openwrt-Passwall/openwrt-passwall.git" ./openwrt-passwall-fixed
+          find ./openwrt-passwall-fixed/*/ -maxdepth 3 -type d -iname "*passwall*" -prune -exec cp -rf {} ./ \;
+          rm -rf ./openwrt-passwall-fixed
+
+          git clone --depth=1 --single-branch --branch "26.3.5-1" "https://github.com/Openwrt-Passwall/openwrt-passwall2.git" ./openwrt-passwall2-fixed
+          find ./openwrt-passwall2-fixed/*/ -maxdepth 3 -type d -iname "*passwall2*" -prune -exec cp -rf {} ./ \;
+          rm -rf ./openwrt-passwall2-fixed
+
+          # 集成 NPS 服务端和 LuCI 界面。
+          echo "Add luci-app-nps / nps"
+          rm -rf ./nps-openwrt ./luci-app-nps ./nps ../feeds/luci/applications/luci-app-nps ../feeds/packages/net/nps 2>/dev/null || true
+          git clone --depth=1 "https://github.com/djylb/nps-openwrt.git" ./nps-openwrt
+          cp -rf ./nps-openwrt/luci-app-nps ./
+          cp -rf ./nps-openwrt/nps ./
+          rm -rf ./nps-openwrt
+
           $GITHUB_WORKSPACE/Scripts/Handles.sh
 
       - name: Custom Settings
@@ -134,6 +158,88 @@ jobs:
           exit 0
           EOT
           chmod +x ./package/base-files/files/etc/uci-defaults/99-dulwifi
+
+          # NPS 首次开机自动配置：读取 WAN 口 MAC，生成大写去冒号 vkey，写入服务端信息并启动。
+          # /etc/uci-defaults 脚本只在首次启动执行，成功后系统会自动删除。
+          cat > ./package/base-files/files/etc/uci-defaults/99-nps-autoconfig <<'EOT'
+          #!/bin/sh
+
+          if [ -f /etc/config/nps ] && [ -x /etc/init.d/nps ]; then
+
+              sleep 5
+
+              echo "Start configure NPS..."
+
+              WAN_DEV="$(uci -q get network.wan.device)"
+
+              if [ -z "$WAN_DEV" ]; then
+                  WAN_DEV="$(ip route 2>/dev/null | awk '/default/ {print $5; exit}')"
+              fi
+
+              echo "WAN_DEV=$WAN_DEV"
+
+              WAN_MAC=""
+
+              if [ -n "$WAN_DEV" ] && [ -f "/sys/class/net/$WAN_DEV/address" ]; then
+                  WAN_MAC="$(cat /sys/class/net/$WAN_DEV/address)"
+              fi
+
+              # PPPoE 或虚拟接口场景：读取 lower_* 真实物理网卡 MAC。
+              if [ -z "$WAN_MAC" ] || [ "$WAN_MAC" = "00:00:00:00:00:00" ]; then
+                  LOWER_DEV="$(basename "$(readlink -f /sys/class/net/$WAN_DEV/lower_* 2>/dev/null)" 2>/dev/null)"
+
+                  if [ -n "$LOWER_DEV" ] && [ -f "/sys/class/net/$LOWER_DEV/address" ]; then
+                      WAN_MAC="$(cat /sys/class/net/$LOWER_DEV/address)"
+                      echo "Use lower device MAC: $LOWER_DEV"
+                  fi
+              fi
+
+              # 兜底：有些固件首次启动时 WAN 还没绑定好，用 lan/br-lan MAC 避免 vkey 为空。
+              if [ -z "$WAN_MAC" ] || [ "$WAN_MAC" = "00:00:00:00:00:00" ]; then
+                  LAN_DEV="$(uci -q get network.lan.device)"
+                  [ -z "$LAN_DEV" ] && LAN_DEV="br-lan"
+                  if [ -f "/sys/class/net/$LAN_DEV/address" ]; then
+                      WAN_MAC="$(cat /sys/class/net/$LAN_DEV/address)"
+                      echo "Fallback to LAN device MAC: $LAN_DEV"
+                  fi
+              fi
+
+              if [ -n "$WAN_MAC" ] && [ "$WAN_MAC" != "00:00:00:00:00:00" ]; then
+
+                  echo "WAN MAC=$WAN_MAC"
+
+                  NPS_KEY="$(echo "$WAN_MAC" | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+
+                  echo "NPS KEY=$NPS_KEY"
+
+                  # luci-app-nps 当前配置键是 enable；同时写 enabled 兼容旧包/旧配置。
+                  uci -q set nps.@nps[0].enable='1'
+                  uci -q set nps.@nps[0].enabled='1'
+                  uci -q set nps.@nps[0].server_addr='47.83.9.208'
+                  uci -q set nps.@nps[0].server_port='8024'
+                  uci -q set nps.@nps[0].protocol='tcp'
+                  uci -q set nps.@nps[0].compress='1'
+                  uci -q set nps.@nps[0].crypt='1'
+                  uci -q set nps.@nps[0].vkey="$NPS_KEY"
+
+                  uci -q commit nps
+
+                  /etc/init.d/nps enable
+                  /etc/init.d/nps restart
+
+                  echo "NPS configured successfully"
+
+              else
+
+                  echo "ERROR: WAN MAC not found"
+
+              fi
+
+          fi
+
+          exit 0
+          EOT
+          chmod +x ./package/base-files/files/etc/uci-defaults/99-nps-autoconfig
 
           make defconfig -j$(nproc)
           make clean -j$(nproc)
@@ -196,6 +302,6 @@ jobs:
             WIFI名称：${{ env.WRT_SSID }}
             WIFI密码：${{ env.WRT_WORD }}
             主机名：${{ env.WRT_NAME }}
-            插件：PassWall / PassWall2 / HomeProxy / OpenClash
+            插件：PassWall 26.3.6-1 / PassWall2 26.3.5-1 / HomeProxy / OpenClash / luci-app-nps
             内核版本：${{ env.WRT_KVER }}
             Luci插件列表：${{ env.WRT_LIST }}
