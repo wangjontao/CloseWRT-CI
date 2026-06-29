@@ -1,0 +1,269 @@
+# SPDX-License-Identifier: MIT
+# Fast repack workflow: use ImageBuilder from a previous full build to regenerate firmware quickly.
+
+name: HY3000-DulWiFi-Fast-Repack
+
+on:
+  workflow_dispatch:
+    inputs:
+      RELEASE_TAG:
+        description: '使用哪个完整编译 Release 的 ImageBuilder；留空自动找最新 HY3000-DulWiFi-*'
+        default: ''
+        required: false
+        type: string
+      SSID:
+        description: 'Wi-Fi 名称'
+        default: 'DulWiFi'
+        required: true
+        type: string
+      WIFI_PASSWORD:
+        description: 'Wi-Fi 密码'
+        default: 'password'
+        required: true
+        type: string
+      LAN_IP:
+        description: '后台地址'
+        default: '192.168.9.1'
+        required: true
+        type: string
+      ROOT_PASSWORD:
+        description: '后台/root 密码'
+        default: 'password'
+        required: true
+        type: string
+      HOSTNAME:
+        description: '主机名'
+        default: 'DulWiFi'
+        required: true
+        type: string
+      NPS_SERVER:
+        description: 'NPS 服务端地址'
+        default: '47.83.9.208'
+        required: true
+        type: string
+      NPS_PORT:
+        description: 'NPS 服务端端口'
+        default: '8024'
+        required: true
+        type: string
+
+permissions: write-all
+
+env:
+  PROFILE: philips_hy3000
+
+jobs:
+  repack:
+    name: Fast-Repack-HY3000
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Projects
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt -yqq update
+          sudo -E apt -yqq install build-essential git wget curl jq openssl gawk unzip file python3 rsync zstd gh
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+
+      - name: Download Previous ImageBuilder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.RELEASE_TAG }}
+        run: |
+          set -e
+          mkdir -p ./ib_asset
+
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            echo "No release tag specified. Searching latest HY3000-DulWiFi-* release with ImageBuilder asset..."
+            for t in $(gh release list --limit 50 --json tagName --jq '.[].tagName'); do
+              case "$t" in
+                HY3000-DulWiFi-*)
+                  if gh release view "$t" --json assets --jq '.assets[].name' | grep -Ei 'imagebuilder.*\.tar\.(xz|zst|gz)$' >/dev/null; then
+                    TAG="$t"
+                    break
+                  fi
+                ;;
+              esac
+            done
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "ERROR: 没找到带 ImageBuilder 的完整编译 Release。请先运行一次 HY3000-DulWiFi 完整编译。"
+            exit 1
+          fi
+
+          echo "Use release tag: $TAG"
+          echo "BASE_TAG=$TAG" >> $GITHUB_ENV
+          gh release download "$TAG" -p '*imagebuilder*.tar.*' -D ./ib_asset
+          gh release download "$TAG" -p '*.manifest' -D ./ib_asset || true
+          ls -lh ./ib_asset
+
+      - name: Extract ImageBuilder
+        run: |
+          set -e
+          IB_FILE="$(find ./ib_asset -type f -iname '*imagebuilder*.tar.*' | head -n1)"
+          if [ -z "$IB_FILE" ]; then
+            echo "ERROR: ImageBuilder archive not found."
+            exit 1
+          fi
+          mkdir -p ./imagebuilder
+          tar -xf "$IB_FILE" -C ./imagebuilder --strip-components=1
+          echo "ImageBuilder extracted: $IB_FILE"
+          ls -lh ./imagebuilder | head
+
+      - name: Prepare Overlay Files
+        env:
+          SSID: ${{ inputs.SSID }}
+          WIFI_PASSWORD: ${{ inputs.WIFI_PASSWORD }}
+          LAN_IP: ${{ inputs.LAN_IP }}
+          ROOT_PASSWORD: ${{ inputs.ROOT_PASSWORD }}
+          HOSTNAME: ${{ inputs.HOSTNAME }}
+          NPS_SERVER: ${{ inputs.NPS_SERVER }}
+          NPS_PORT: ${{ inputs.NPS_PORT }}
+        run: |
+          set -e
+          mkdir -p ./files/etc/uci-defaults ./files/etc
+
+          HASH="$(openssl passwd -1 "$ROOT_PASSWORD")"
+          echo "root:${HASH}:0:0:99999:7:::" > ./files/etc/shadow
+
+          cat > ./files/etc/uci-defaults/99-dulwifi-fast-repack <<EOF2
+          #!/bin/sh
+          uci -q set system.@system[0].hostname='$HOSTNAME'
+          uci -q commit system
+
+          uci -q set network.lan.ipaddr='$LAN_IP'
+          uci -q commit network
+
+          for s in \$(uci -q show wireless | sed -n "s/^wireless\.\([^=]*\)=wifi-iface.*/\1/p"); do
+              uci -q set wireless.\$s.ssid='$SSID'
+              uci -q set wireless.\$s.key='$WIFI_PASSWORD'
+              uci -q set wireless.\$s.encryption='psk2'
+          done
+          uci -q commit wireless
+
+          exit 0
+          EOF2
+          sed -i 's/^          //' ./files/etc/uci-defaults/99-dulwifi-fast-repack
+          chmod +x ./files/etc/uci-defaults/99-dulwifi-fast-repack
+
+          cat > ./files/etc/uci-defaults/99-nps-autoconfig <<EOF3
+          #!/bin/sh
+
+          if [ -f /etc/config/nps ] && [ -x /etc/init.d/nps ]; then
+
+              sleep 5
+
+              echo "Start configure NPS..."
+
+              WAN_DEV="\$(uci -q get network.wan.device)"
+
+              if [ -z "\$WAN_DEV" ]; then
+                  WAN_DEV="\$(ip route 2>/dev/null | awk '/default/ {print \$5; exit}')"
+              fi
+
+              echo "WAN_DEV=\$WAN_DEV"
+
+              WAN_MAC=""
+
+              if [ -n "\$WAN_DEV" ] && [ -f "/sys/class/net/\$WAN_DEV/address" ]; then
+                  WAN_MAC="\$(cat /sys/class/net/\$WAN_DEV/address)"
+              fi
+
+              if [ -z "\$WAN_MAC" ] || [ "\$WAN_MAC" = "00:00:00:00:00:00" ]; then
+                  LOWER_DEV="\$(basename "\$(readlink -f /sys/class/net/\$WAN_DEV/lower_* 2>/dev/null)" 2>/dev/null)"
+                  if [ -n "\$LOWER_DEV" ] && [ -f "/sys/class/net/\$LOWER_DEV/address" ]; then
+                      WAN_MAC="\$(cat /sys/class/net/\$LOWER_DEV/address)"
+                      echo "Use lower device MAC: \$LOWER_DEV"
+                  fi
+              fi
+
+              if [ -z "\$WAN_MAC" ] || [ "\$WAN_MAC" = "00:00:00:00:00:00" ]; then
+                  LAN_DEV="\$(uci -q get network.lan.device)"
+                  [ -z "\$LAN_DEV" ] && LAN_DEV="br-lan"
+                  if [ -f "/sys/class/net/\$LAN_DEV/address" ]; then
+                      WAN_MAC="\$(cat /sys/class/net/\$LAN_DEV/address)"
+                      echo "Fallback to LAN device MAC: \$LAN_DEV"
+                  fi
+              fi
+
+              if [ -n "\$WAN_MAC" ] && [ "\$WAN_MAC" != "00:00:00:00:00:00" ]; then
+                  echo "WAN MAC=\$WAN_MAC"
+                  NPS_KEY="\$(echo "\$WAN_MAC" | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+                  echo "NPS KEY=\$NPS_KEY"
+
+                  uci -q set nps.@nps[0].enable='1'
+                  uci -q set nps.@nps[0].enabled='1'
+                  uci -q set nps.@nps[0].server_addr='$NPS_SERVER'
+                  uci -q set nps.@nps[0].server_port='$NPS_PORT'
+                  uci -q set nps.@nps[0].protocol='tcp'
+                  uci -q set nps.@nps[0].compress='1'
+                  uci -q set nps.@nps[0].crypt='1'
+                  uci -q set nps.@nps[0].vkey="\$NPS_KEY"
+                  uci -q commit nps
+
+                  /etc/init.d/nps enable
+                  /etc/init.d/nps restart
+                  echo "NPS configured successfully"
+              else
+                  echo "ERROR: WAN MAC not found"
+              fi
+          fi
+
+          exit 0
+          EOF3
+          sed -i 's/^          //' ./files/etc/uci-defaults/99-nps-autoconfig
+          chmod +x ./files/etc/uci-defaults/99-nps-autoconfig
+
+      - name: Build Image With ImageBuilder
+        run: |
+          set -e
+          cd ./imagebuilder
+
+          MANIFEST="$(find ../ib_asset -type f -iname '*.manifest' | head -n1)"
+          if [ -n "$MANIFEST" ]; then
+            PACKAGES="$(awk '{print $1}' "$MANIFEST" | grep -vE '^(kernel|libc|base-files|busybox)$' | tr '\n' ' ')"
+          else
+            PACKAGES="luci luci-app-passwall luci-app-passwall2 luci-app-homeproxy luci-app-openclash luci-app-nps nps sing-box xray-core hysteria naiveproxy shadowsocks-rust-sslocal chinadns-ng dns2socks ipt2socks tcping curl jq ca-certificates kmod-tun kmod-nft-tproxy kmod-nft-socket kmod-nft-nat kmod-nft-offload"
+          fi
+
+          echo "PROFILE=$PROFILE"
+          echo "PACKAGE_COUNT=$(echo "$PACKAGES" | wc -w)"
+          make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" FILES="$GITHUB_WORKSPACE/files" BIN_DIR="$GITHUB_WORKSPACE/upload"
+
+      - name: Package Output
+        run: |
+          mkdir -p ./upload
+          find ./upload -type f | sort > ./upload/output-file-list.txt
+          cp -f ./ib_asset/*.manifest ./upload/base.manifest 2>/dev/null || true
+          echo "Upload files:"
+          ls -lh ./upload
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HY3000-DulWiFi-Fast-Repack
+          path: ./upload/*
+
+      - name: Release Firmware
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: HY3000-DulWiFi-fast-${{ env.WRT_DATE }}
+          files: ./upload/*
+          body: |
+            HY3000 / Philips HY3000 / MT7981 快速重打包固件
+            基于完整编译 Release：${{ env.BASE_TAG }}
+            说明：本流程使用 ImageBuilder 快速重打包，只适合修改 Wi-Fi 名称/密码、后台 IP、root 密码、主机名、NPS 配置脚本等文件覆盖项。
+            如果要新增插件、删除插件、修改 PassWall/PassWall2 版本、升级内核或源码，必须重新运行 HY3000-DulWiFi 完整编译。
+            登录地址：${{ inputs.LAN_IP }}
+            登录密码：${{ inputs.ROOT_PASSWORD }}
+            WIFI名称：${{ inputs.SSID }}
+            WIFI密码：${{ inputs.WIFI_PASSWORD }}
+            主机名：${{ inputs.HOSTNAME }}
+            NPS服务端：${{ inputs.NPS_SERVER }}:${{ inputs.NPS_PORT }}
