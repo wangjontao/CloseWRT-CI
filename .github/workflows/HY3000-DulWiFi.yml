@@ -127,15 +127,25 @@ jobs:
       - name: Custom Settings
         run: |
           cd ./wrt/
-          cat $GITHUB_WORKSPACE/Config/HY3000.txt $GITHUB_WORKSPACE/Config/GENERAL.txt $GITHUB_WORKSPACE/Config/PRIVATE.txt >> .config
 
-          # 覆盖多设备配置，强制单 HY3000，避免生成 MT7981 全设备包。
-          sed -i '/CONFIG_TARGET_MULTI_PROFILE/d' .config
-          sed -i '/CONFIG_TARGET_PER_DEVICE_ROOTFS/d' .config
-          echo '# CONFIG_TARGET_MULTI_PROFILE is not set' >> .config
-          echo '# CONFIG_TARGET_PER_DEVICE_ROOTFS is not set' >> .config
+          # 重新生成 .config，避免源码仓库自带/上次残留配置把设备选成 abt_asr3000 等其它型号。
+          rm -f .config
+          touch .config
+          cat $GITHUB_WORKSPACE/Config/HY3000.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
 
           $GITHUB_WORKSPACE/Scripts/Settings.sh
+
+          # 最后强制只保留 HY3000 单设备配置。GENERAL.txt 默认是多设备，这里必须覆盖。
+          sed -i '/^CONFIG_TARGET_MULTI_PROFILE/d' .config
+          sed -i '/^CONFIG_TARGET_PER_DEVICE_ROOTFS/d' .config
+          sed -i '/^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_/d' .config
+          cat >> .config <<'EOT'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_philips_hy3000=y
+          # CONFIG_TARGET_MULTI_PROFILE is not set
+          # CONFIG_TARGET_PER_DEVICE_ROOTFS is not set
+          EOT
 
           # 设置后台/root 密码为 password。原仓库 WRT_PW 只写 Release 说明，不会真正改系统密码。
           HASH="$(openssl passwd -1 "$WRT_PW")"
@@ -242,6 +252,14 @@ jobs:
           chmod +x ./package/base-files/files/etc/uci-defaults/99-nps-autoconfig
 
           make defconfig -j$(nproc)
+
+          echo "Selected target device:"
+          grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_.*=y' .config || true
+          if ! grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_philips_hy3000=y' .config; then
+            echo "ERROR: HY3000 profile is not selected after defconfig."
+            exit 1
+          fi
+
           make clean -j$(nproc)
 
       - name: Download Packages
@@ -275,10 +293,25 @@ jobs:
           if [[ $WRT_TEST != 'true' ]]; then
             echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n1)" >> $GITHUB_ENV
             echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
-            find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
-            find ./bin/targets/ -type f -iname "*hy3000*" -exec cp -f {} ./upload/ \; || true
-            find ./bin/targets/ -type f -iname "*philips*" -exec cp -f {} ./upload/ \; || true
-            find ./bin/targets/ -type f -name "*.manifest" -exec cp -f {} ./upload/ \; || true
+            # 保存实际输出文件列表，方便排查文件名是否是 hy3000 / philips / asr3000。
+            find ./bin/targets/ -type f | sort > ./upload/output-file-list.txt
+
+            # 不再只按 *hy3000* / *philips* 过滤。部分源码会把 HY3000 兼容镜像命名为 abt_asr3000，
+            # 旧过滤规则会漏拷贝固件，导致 Release 里只有 config/manifest。
+            find ./bin/targets/ -type f \( \
+              -iname "*.bin" -o \
+              -iname "*.itb" -o \
+              -iname "*.img" -o \
+              -iname "*.img.gz" -o \
+              -iname "*.tar" -o \
+              -iname "*.tar.gz" -o \
+              -iname "*.ubi" -o \
+              -iname "*.manifest" -o \
+              -iname "sha256sums" \
+            \) -exec cp -f {} ./upload/ \; || true
+
+            echo "Upload files:"
+            ls -lh ./upload/
           fi
 
       - name: Upload Artifact
