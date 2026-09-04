@@ -80,7 +80,10 @@ jobs:
             feeds/luci/applications/luci-app-passwall \
             feeds/luci/applications/luci-app-passwall2 \
             feeds/luci/applications/luci-app-npc \
-            feeds/packages/net/npc
+            feeds/luci/applications/luci-app-nps \
+            feeds/packages/net/npc feeds/packages/net/nps \
+            package/feeds/luci/luci-app-npc package/feeds/luci/luci-app-nps \
+            package/feeds/packages/npc package/feeds/packages/nps
 
           git clone --depth=1 --branch "$PASSWALL_TAG" \
             https://github.com/Openwrt-Passwall/openwrt-passwall.git /tmp/openwrt-passwall
@@ -126,8 +129,8 @@ jobs:
 
           echo '=== selected device ==='
           grep -E '^CONFIG_TARGET|philips_hy3000' .config | head -80
-          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_philips_hy3000=y' .config
-          if grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_.*=y' .config | \
+          grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y' .config
+          if grep -E '^CONFIG_TARGET_mediatek_filogic_DEVICE_.*=y' .config | \
             grep -qv 'DEVICE_philips_hy3000=y'; then
             echo 'ERROR: another Filogic device was selected'
             exit 1
