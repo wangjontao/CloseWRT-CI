@@ -1,7 +1,7 @@
 # Philips HY3000 eMMC / MT7981 / ImmortalWrt 24.10
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_philips_hy3000=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y
 # CONFIG_TARGET_MULTI_PROFILE is not set
 # CONFIG_TARGET_PER_DEVICE_ROOTFS is not set
 # CONFIG_TARGET_ROOTFS_INITRAMFS is not set
