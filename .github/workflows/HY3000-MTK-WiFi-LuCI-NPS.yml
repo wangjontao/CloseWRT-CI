@@ -284,6 +284,10 @@ jobs:
       - name: Compile firmware
         working-directory: wrt
         run: |
+          # The shared Go cache can contain partial module trees after an
+          # interrupted sing-box build. Recreate it before compiling.
+          rm -rf dl/go-mod-cache
+          mkdir -p dl/go-mod-cache
           make target/linux/prepare -j"$(nproc)"
           DRIVER="$(find build_dir -path '*/drivers/net/ethernet/mediatek/mtk_eth_soc.c' -type f | head -n1)"
           test -n "$DRIVER"
