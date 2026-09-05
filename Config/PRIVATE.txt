@@ -22,9 +22,10 @@ CONFIG_PACKAGE_sing-box=y
 CONFIG_PACKAGE_xray-core=y
 CONFIG_PACKAGE_hysteria=y
 
-# NPS client and LuCI application
+# NPS client binary and LuCI application
 CONFIG_PACKAGE_npc=y
-CONFIG_PACKAGE_luci-app-npc=y
+CONFIG_PACKAGE_luci-app-nps=y
+# CONFIG_PACKAGE_luci-app-npc is not set
 
 # Required networking/runtime packages
 CONFIG_PACKAGE_dnsmasq-full=y
