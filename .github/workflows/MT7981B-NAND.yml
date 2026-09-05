@@ -1,0 +1,198 @@
+name: MT7981B-24.10-NAND
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mt7981b-24.10-nand
+  cancel-in-progress: false
+
+env:
+  WRT_REPO: https://github.com/Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly.git
+  WRT_BRANCH: openwrt-24.10-6.6
+  PASSWALL_TAG: 26.3.6-1
+  PASSWALL2_TAG: 26.3.5-1
+  PASSWALL_PACKAGES_COMMIT: 3e11c458c552aefd348232c627fd1ed9f8f08e41
+  NPS_OPENWRT_COMMIT: 480f2e502575641a0c9280d6fad971550621316d
+
+jobs:
+  build:
+    name: RAX3000M Q30PRO Z8103AX-C
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout build configuration
+        uses: actions/checkout@v4
+
+      - name: Initialize build environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
+            gettext git libncurses-dev libssl-dev python3-setuptools rsync swig unzip \
+            zlib1g-dev file wget curl jq openssl ccache zstd
+          sudo timedatectl set-timezone Asia/Shanghai
+          sudo mkdir -p /mnt/build_wrt
+          sudo chown "$USER:$USER" /mnt/build_wrt
+          ln -s /mnt/build_wrt "$GITHUB_WORKSPACE/wrt"
+
+      - name: Install Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.x
+          cache: false
+
+      - name: Clone ImmortalWrt 24.10 source
+        run: |
+          git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" wrt/
+          cd wrt
+          echo "WRT_HASH=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date +'%Y.%m.%d-%H.%M.%S')" >> "$GITHUB_ENV"
+          test -f target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
+          grep -q 'TARGET_DEVICES += philips_hy3000' target/linux/mediatek/image/filogic.mk
+
+      - name: Restore downloads and compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            wrt/dl
+            wrt/.ccache
+          key: mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/MT7981B-NAND.txt', 'Config/PRIVATE.txt', '.github/workflows/MT7981B-NAND.yml') }}
+          restore-keys: |
+            mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-
+
+      - name: Update feeds
+        working-directory: wrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Add fixed proxy and NPC packages
+        working-directory: wrt
+        run: |
+          rm -rf package/luci-app-passwall package/luci-app-passwall2 \
+            package/passwall-packages package/npc package/luci-app-npc \
+            feeds/luci/applications/luci-app-passwall \
+            feeds/luci/applications/luci-app-passwall2 \
+            feeds/luci/applications/luci-app-npc \
+            feeds/luci/applications/luci-app-nps \
+            feeds/packages/net/npc feeds/packages/net/nps \
+            package/feeds/luci/luci-app-npc package/feeds/luci/luci-app-nps \
+            package/feeds/packages/npc package/feeds/packages/nps
+
+          git clone --depth=1 --branch "$PASSWALL_TAG" \
+            https://github.com/Openwrt-Passwall/openwrt-passwall.git /tmp/openwrt-passwall
+          mv /tmp/openwrt-passwall/luci-app-passwall package/
+
+          git clone --depth=1 --branch "$PASSWALL2_TAG" \
+            https://github.com/Openwrt-Passwall/openwrt-passwall2.git /tmp/openwrt-passwall2
+          mv /tmp/openwrt-passwall2/luci-app-passwall2 package/
+
+          git clone https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git \
+            package/passwall-packages
+          git -C package/passwall-packages checkout "$PASSWALL_PACKAGES_COMMIT"
+          rm -rf package/passwall-packages/.git
+
+          git clone https://github.com/djylb/nps-openwrt.git /tmp/nps-openwrt
+          git -C /tmp/nps-openwrt checkout "$NPS_OPENWRT_COMMIT"
+          cp -a /tmp/nps-openwrt/npc package/
+          cp -a /tmp/nps-openwrt/luci-app-npc package/
+
+      - name: Apply MT7981B NAND configuration and defaults
+        working-directory: wrt
+        run: |
+          rm -f .config
+          cat "$GITHUB_WORKSPACE/Config/MT7981B-NAND.txt" \
+              "$GITHUB_WORKSPACE/Config/PRIVATE.txt" > .config
+
+          cp -a "$GITHUB_WORKSPACE/Files/." package/base-files/files/
+          chmod 0755 package/base-files/files/etc/init.d/npc-wan-mac
+          chmod 0755 package/base-files/files/etc/uci-defaults/99-dulwifi
+          chmod 0755 package/base-files/files/etc/uci-defaults/99-enable-npc-wan-mac
+          chmod 0755 package/base-files/files/usr/libexec/npc-wan-mac
+
+          sed -i "s/192\\.168\\.[0-9]*\\.[0-9]*/192.168.7.1/g" \
+            package/base-files/files/bin/config_generate
+          sed -i "s/hostname='.*'/hostname='DulWiFi'/g" \
+            package/base-files/files/bin/config_generate
+
+          ROOT_HASH="$(openssl passwd -1 '@password@')"
+          sed -i "s#^root:[^:]*:#root:${ROOT_HASH}:#" \
+            package/base-files/files/etc/shadow
+
+          make defconfig
+
+          echo '=== selected devices ==='
+          grep -E '^CONFIG_TARGET|rax3000m|q30-pro|z8103ax-c' .config | head -120
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m=y' .config
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jcg_q30-pro=y' .config
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_zbtlink_zbt-z8103ax-c=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-homeproxy=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-npc=y' .config
+          grep -q '^CONFIG_PACKAGE_npc=y' .config
+          ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/MT7981B-NAND-final.config"
+
+      - name: Download sources
+        working-directory: wrt
+        run: |
+          make download -j"$(nproc)"
+          find dl -type f -size -1024c -print -delete
+
+      - name: Compile firmware
+        working-directory: wrt
+        run: |
+          make target/linux/prepare -j"$(nproc)"
+          DRIVER="$(find build_dir -path '*/drivers/net/ethernet/mediatek/mtk_eth_soc.c' -type f | head -n1)"
+          test -n "$DRIVER"
+          sed -i '1i#define HIT_BIND_FORCE_TO_CPU 0x1d\n#define MTK_FE_START_RESET 0x100\n#define MTK_FE_RESET_NAT_DONE 0x101\n#define MTK_FE_RESET_DONE 0x102\n#define MTK_WIFI_RESET_DONE 0x103\n#define MTK_WIFI_CHIP_ONLINE 0x104\n#define MTK_WIFI_CHIP_OFFLINE 0x105' "$DRIVER"
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Verify and collect MT7981B NAND firmware
+        working-directory: wrt
+        run: |
+          mkdir -p upload
+          for device in cmcc_rax3000m jcg_q30-pro zbtlink_zbt-z8103ax-c; do
+            mapfile -t images < <(find bin/targets/mediatek/filogic -maxdepth 1 -type f -iname "*${device}*sysupgrade*" -size +5M)
+            if [ "${#images[@]}" -eq 0 ]; then
+              echo "ERROR: no sysupgrade image was produced for ${device}."
+              find bin/targets/mediatek/filogic -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+              exit 1
+            fi
+            cp -a "${images[@]}" upload/
+            find bin/targets/mediatek/filogic -maxdepth 1 -type f -name "*${device}*.manifest" -exec cp -a {} upload/ \;
+          done
+          find bin/targets/mediatek/filogic -maxdepth 1 -type f -name '*.buildinfo' -exec cp -a {} upload/ \;
+          cp "$GITHUB_WORKSPACE/MT7981B-NAND-final.config" upload/
+          sha256sum upload/* | tee upload/SHA256SUMS
+          ls -lh upload
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MT7981B-NAND-24.10-${{ env.BUILD_DATE }}
+          path: wrt/upload/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish firmware release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: MT7981B-NAND-24.10-${{ env.BUILD_DATE }}
+          name: MT7981B NAND 24.10 ${{ env.BUILD_DATE }}
+          files: wrt/upload/*
+          body: |
+            CMCC RAX3000M NAND / JCG Q30 PRO / ZBT-Z8103AX-C / ImmortalWrt 24.10 / kernel 6.6
+            Source commit: ${{ env.WRT_HASH }}
+            Management IP: 192.168.7.1
+            Wi-Fi: DulWiFi-5G / DulWiFi-2.4G
+            PassWall: 26.3.6-1
+            PassWall2: 26.3.5-1
+            Included: HomeProxy, luci-app-npc
+            NPC: nps.jontao.top:8024; WAN MAC is used as uppercase vkey without colons.

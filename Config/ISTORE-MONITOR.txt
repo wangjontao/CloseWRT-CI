@@ -1,0 +1,20 @@
+# iStore application store
+CONFIG_PACKAGE_luci-app-store=y
+CONFIG_PACKAGE_luci-lib-taskd=y
+CONFIG_PACKAGE_luci-lib-xterm=y
+CONFIG_PACKAGE_taskd=y
+
+# LuCI system monitoring
+CONFIG_PACKAGE_luci-app-statistics=y
+CONFIG_PACKAGE_collectd=y
+CONFIG_PACKAGE_collectd-mod-cpu=y
+CONFIG_PACKAGE_collectd-mod-df=y
+CONFIG_PACKAGE_collectd-mod-disk=y
+CONFIG_PACKAGE_collectd-mod-interface=y
+CONFIG_PACKAGE_collectd-mod-iwinfo=y
+CONFIG_PACKAGE_collectd-mod-load=y
+CONFIG_PACKAGE_collectd-mod-memory=y
+CONFIG_PACKAGE_collectd-mod-network=y
+CONFIG_PACKAGE_collectd-mod-rrdtool=y
+CONFIG_PACKAGE_collectd-mod-thermal=y
+CONFIG_PACKAGE_collectd-mod-uptime=y

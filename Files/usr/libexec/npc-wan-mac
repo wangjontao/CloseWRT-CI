@@ -1,0 +1,3 @@
+#!/bin/sh
+# Deprecated: luci-app-npc was replaced by luci-app-nps.
+exit 0

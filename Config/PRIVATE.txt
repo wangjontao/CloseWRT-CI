@@ -1,44 +1,40 @@
-# 只编译单设备，避免 MT7981 全家桶多设备固件包过大
-# CONFIG_TARGET_MULTI_PROFILE is not set
-# CONFIG_TARGET_PER_DEVICE_ROOTFS is not set
+# Web interface and Chinese translation
+CONFIG_PACKAGE_luci=y
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-lib-ipkg=y
+CONFIG_PACKAGE_luci-app-mtwifi-cfg=y
 
-# 代理 / TikTok 常用插件
+# Proxy applications
 CONFIG_PACKAGE_luci-app-passwall=y
 CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_luci-app-homeproxy=y
-CONFIG_PACKAGE_luci-app-openclash=y
 
-# PassWall / PassWall2 常用核心，部分选项如果上游不存在会被 defconfig 自动忽略
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy=y
+# PassWall cores kept deliberately compact and compatible with 24.10
+CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin=y
+CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y
 CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria=y
-CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_NaiveProxy=y
-CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client=y
 CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_SingBox=y
-CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Xray=y
-
-# 常用运行核心/依赖
 CONFIG_PACKAGE_sing-box=y
 CONFIG_PACKAGE_xray-core=y
 CONFIG_PACKAGE_hysteria=y
-CONFIG_PACKAGE_naiveproxy=y
-CONFIG_PACKAGE_shadowsocks-rust-sslocal=y
-CONFIG_PACKAGE_chinadns-ng=y
-CONFIG_PACKAGE_dns2socks=y
-CONFIG_PACKAGE_ipt2socks=y
-CONFIG_PACKAGE_tcping=y
+
+# NPS client binary and LuCI application
+CONFIG_PACKAGE_npc=y
+CONFIG_PACKAGE_luci-app-nps=y
+# CONFIG_PACKAGE_luci-app-npc is not set
+
+# Required networking/runtime packages
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_jq=y
 CONFIG_PACKAGE_ca-certificates=y
 CONFIG_PACKAGE_kmod-tun=y
-CONFIG_PACKAGE_kmod-nft-tproxy=y
 CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
 CONFIG_PACKAGE_kmod-nft-nat=y
 CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_CCACHE=y
