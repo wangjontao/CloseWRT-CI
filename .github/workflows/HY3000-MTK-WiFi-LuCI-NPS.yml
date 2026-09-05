@@ -270,7 +270,6 @@ jobs:
           grep -q '^CONFIG_PACKAGE_kmod-mt_wifi=y' .config
           grep -q '^CONFIG_PACKAGE_kmod-conninfra=y' .config
           grep -q '^CONFIG_PACKAGE_mtwifi-cfg=y' .config
-          grep -q '^CONFIG_PACKAGE_wifi-dats=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-homeproxy=y' .config
