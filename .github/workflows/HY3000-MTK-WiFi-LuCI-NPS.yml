@@ -1,4 +1,4 @@
-name: HY3000-24.10-MTK-WiFi-LuCI-NPS
+name: HY3000-PadavanOnly-MTK-WiFi-NPS
 
 on:
   workflow_dispatch:
@@ -10,12 +10,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: hy3000-24.10-mtkwifi-luci-nps
+  group: hy3000-padavanonly-verified
   cancel-in-progress: false
 
 env:
-  WRT_REPO: https://github.com/Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly.git
+  WRT_REPO: https://github.com/padavanonly/immortalwrt-mt798x-6.6.git
   WRT_BRANCH: openwrt-24.10-6.6
+  WRT_COMMIT: ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8
   PASSWALL_TAG: 26.3.6-1
   PASSWALL2_TAG: 26.3.5-1
   PASSWALL_PACKAGES_COMMIT: 3e11c458c552aefd348232c627fd1ed9f8f08e41
@@ -54,6 +55,8 @@ jobs:
         run: |
           git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" wrt/
           cd wrt
+          git fetch --depth=1 origin "$WRT_COMMIT"
+          git checkout --detach "$WRT_COMMIT"
           echo "WRT_HASH=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           echo "BUILD_DATE=$(date +'%Y.%m.%d-%H.%M.%S')" >> "$GITHUB_ENV"
           test -f target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
@@ -135,11 +138,14 @@ jobs:
       - name: Apply HY3000 MTK WiFi and LuCI NPS configuration
         working-directory: wrt
         run: |
+          # Import vendor driver choices without enabling other device profiles.
+          grep -E '^CONFIG_(MTK_|WARP_|WED_|first_card)' defconfig/mt7981-ax3000.config > /tmp/hy3000-vendor.config
           rm -f .config
           cat "$GITHUB_WORKSPACE/Config/HY3000.txt" \
               "$GITHUB_WORKSPACE/Config/PRIVATE.txt" \
               "$GITHUB_WORKSPACE/Config/HY3000-iStore-QuickStart.txt" > .config
 
+          cat /tmp/hy3000-vendor.config >> .config
           cat >> .config <<'WIFI_EOF'
           CONFIG_first_card=y
           CONFIG_first_card_name="MT7981"
