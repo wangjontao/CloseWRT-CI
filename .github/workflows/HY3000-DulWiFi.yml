@@ -1,4 +1,4 @@
-name: MT7981B-24.10-NAND
+name: MT7981B-24.10-NAND-iStore-Monitor
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: mt7981b-24.10-nand
+  group: mt7981b-24.10-nand-istore-monitor
   cancel-in-progress: false
 
 env:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    name: RAX3000M Q30PRO Z8103AX-C
+    name: RAX3000M Q30PRO Z8103AX-C iStore Monitor
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -62,15 +62,17 @@ jobs:
           path: |
             wrt/dl
             wrt/.ccache
-          key: mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/MT7981B-NAND.txt', 'Config/PRIVATE.txt', '.github/workflows/MT7981B-NAND.yml') }}
+          key: mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/MT7981B-NAND.txt', 'Config/PRIVATE.txt', 'Config/ISTORE-MONITOR.txt', '.github/workflows/HY3000-DulWiFi.yml') }}
           restore-keys: |
             mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-
 
-      - name: Update feeds
+      - name: Update feeds and add iStore
         working-directory: wrt
         run: |
+          grep -q '^src-git istore ' feeds.conf.default || echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          ./scripts/feeds install -d y -p istore luci-app-store
 
       - name: Add fixed proxy and NPC packages
         working-directory: wrt
@@ -108,7 +110,8 @@ jobs:
         run: |
           rm -f .config
           cat "$GITHUB_WORKSPACE/Config/MT7981B-NAND.txt" \
-              "$GITHUB_WORKSPACE/Config/PRIVATE.txt" > .config
+              "$GITHUB_WORKSPACE/Config/PRIVATE.txt" \
+              "$GITHUB_WORKSPACE/Config/ISTORE-MONITOR.txt" > .config
 
           cp -a "$GITHUB_WORKSPACE/Files/." package/base-files/files/
           chmod 0755 package/base-files/files/etc/init.d/npc-wan-mac
@@ -137,6 +140,8 @@ jobs:
           grep -q '^CONFIG_PACKAGE_luci-app-homeproxy=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-npc=y' .config
           grep -q '^CONFIG_PACKAGE_npc=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-store=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-statistics=y' .config
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/MT7981B-NAND-final.config"
 
       - name: Download sources
@@ -176,7 +181,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MT7981B-NAND-24.10-${{ env.BUILD_DATE }}
+          name: MT7981B-NAND-iStore-Monitor-24.10-${{ env.BUILD_DATE }}
           path: wrt/upload/*
           if-no-files-found: error
           retention-days: 30
@@ -184,8 +189,8 @@ jobs:
       - name: Publish firmware release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: MT7981B-NAND-24.10-${{ env.BUILD_DATE }}
-          name: MT7981B NAND 24.10 ${{ env.BUILD_DATE }}
+          tag_name: MT7981B-NAND-iStore-Monitor-24.10-${{ env.BUILD_DATE }}
+          name: MT7981B NAND iStore Monitor 24.10 ${{ env.BUILD_DATE }}
           files: wrt/upload/*
           body: |
             CMCC RAX3000M NAND / JCG Q30 PRO / ZBT-Z8103AX-C / ImmortalWrt 24.10 / kernel 6.6
@@ -194,5 +199,5 @@ jobs:
             Wi-Fi: DulWiFi-5G / DulWiFi-2.4G
             PassWall: 26.3.6-1
             PassWall2: 26.3.5-1
-            Included: HomeProxy, luci-app-npc
+            Included: iStore, LuCI Statistics, HomeProxy, luci-app-npc
             NPC: nps.jontao.top:8024; WAN MAC is used as uppercase vkey without colons.
