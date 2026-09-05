@@ -59,13 +59,23 @@ jobs:
           test -f target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
           grep -q 'TARGET_DEVICES += philips_hy3000' target/linux/mediatek/image/filogic.mk
 
+      - name: Restore upstream open-source mt76 driver
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse --branch openwrt-24.10 \
+            https://github.com/immortalwrt/immortalwrt.git /tmp/immortalwrt-upstream
+          git -C /tmp/immortalwrt-upstream sparse-checkout set package/kernel/mt76
+          rm -rf wrt/package/kernel/mt76
+          cp -a /tmp/immortalwrt-upstream/package/kernel/mt76 wrt/package/kernel/
+          test -f wrt/package/kernel/mt76/Makefile
+          grep -q 'KernelPackage/mt7915e' wrt/package/kernel/mt76/Makefile
+
       - name: Restore downloads and compiler cache
         uses: actions/cache@v4
         with:
           path: |
             wrt/dl
             wrt/.ccache
-          key: hy3000-open-source-mt76-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/HY3000.txt', 'Config/PRIVATE.txt', 'Config/HY3000-iStore-QuickStart.txt', '.github/workflows/HY3000-DulWiFi.yml') }}
+          key: hy3000-open-source-mt76-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/HY3000.txt', 'Config/PRIVATE.txt', 'Config/HY3000-iStore-QuickStart.txt', '.github/workflows/HY3000-OpenSource-mt76.yml') }}
           restore-keys: |
             hy3000-open-source-mt76-24.10-${{ env.WRT_BRANCH }}-
 
