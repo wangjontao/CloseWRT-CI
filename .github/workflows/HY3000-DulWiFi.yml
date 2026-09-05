@@ -165,6 +165,24 @@ jobs:
 
           echo '=== selected HY3000 configuration ==='
           grep -E '^CONFIG_TARGET|philips_hy3000|luci-app-(store|quickstart|ttyd)|argon' .config | head -160
+          for symbol in \
+            CONFIG_PACKAGE_luci-app-store \
+            CONFIG_PACKAGE_luci-app-quickstart \
+            CONFIG_PACKAGE_luci-theme-argon \
+            CONFIG_PACKAGE_luci-app-argon-config \
+            CONFIG_PACKAGE_luci-app-ttyd \
+            CONFIG_PACKAGE_kmod-mt_wifi \
+            CONFIG_PACKAGE_kmod-conninfra \
+            CONFIG_PACKAGE_mtwifi-cfg \
+            CONFIG_PACKAGE_wifi-dats \
+            CONFIG_PACKAGE_luci-app-passwall \
+            CONFIG_PACKAGE_luci-app-passwall2 \
+            CONFIG_PACKAGE_luci-app-homeproxy \
+            CONFIG_PACKAGE_luci-app-nps; do
+            value="$(sed -n "s/^$symbol=//p" .config | tail -n1)"
+            [ -n "$value" ] || value='MISSING'
+            echo "$symbol=$value"
+          done
           grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-store=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-quickstart=y' .config
