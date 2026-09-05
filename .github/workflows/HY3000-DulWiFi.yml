@@ -1,4 +1,4 @@
-name: HY3000-24.10-DulWiFi
+name: MT7981B-24.10-NAND
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: hy3000-24.10
+  group: mt7981b-24.10-nand
   cancel-in-progress: false
 
 env:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    name: Philips HY3000 eMMC
+    name: RAX3000M Q30PRO Z8103AX-C
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -62,9 +62,9 @@ jobs:
           path: |
             wrt/dl
             wrt/.ccache
-          key: hy3000-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/HY3000.txt', 'Config/PRIVATE.txt', '.github/workflows/HY3000-DulWiFi.yml') }}
+          key: mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-${{ hashFiles('Config/MT7981B-NAND.txt', 'Config/PRIVATE.txt', '.github/workflows/MT7981B-NAND.yml') }}
           restore-keys: |
-            hy3000-24.10-${{ env.WRT_BRANCH }}-
+            mt7981b-nand-24.10-${{ env.WRT_BRANCH }}-
 
       - name: Update feeds
         working-directory: wrt
@@ -103,11 +103,11 @@ jobs:
           cp -a /tmp/nps-openwrt/npc package/
           cp -a /tmp/nps-openwrt/luci-app-npc package/
 
-      - name: Apply HY3000 configuration and defaults
+      - name: Apply MT7981B NAND configuration and defaults
         working-directory: wrt
         run: |
           rm -f .config
-          cat "$GITHUB_WORKSPACE/Config/HY3000.txt" \
+          cat "$GITHUB_WORKSPACE/Config/MT7981B-NAND.txt" \
               "$GITHUB_WORKSPACE/Config/PRIVATE.txt" > .config
 
           cp -a "$GITHUB_WORKSPACE/Files/." package/base-files/files/
@@ -127,20 +127,17 @@ jobs:
 
           make defconfig
 
-          echo '=== selected device ==='
-          grep -E '^CONFIG_TARGET|philips_hy3000' .config | head -80
-          grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y' .config
-          if grep -E '^CONFIG_TARGET_mediatek_filogic_DEVICE_.*=y' .config | \
-            grep -qv 'DEVICE_philips_hy3000=y'; then
-            echo 'ERROR: another Filogic device was selected'
-            exit 1
-          fi
+          echo '=== selected devices ==='
+          grep -E '^CONFIG_TARGET|rax3000m|q30-pro|z8103ax-c' .config | head -120
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m=y' .config
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jcg_q30-pro=y' .config
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_zbtlink_zbt-z8103ax-c=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-homeproxy=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-npc=y' .config
           grep -q '^CONFIG_PACKAGE_npc=y' .config
-          ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/HY3000-final.config"
+          ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/MT7981B-NAND-final.config"
 
       - name: Download sources
         working-directory: wrt
@@ -157,29 +154,29 @@ jobs:
           sed -i '1i#define HIT_BIND_FORCE_TO_CPU 0x1d\n#define MTK_FE_START_RESET 0x100\n#define MTK_FE_RESET_NAT_DONE 0x101\n#define MTK_FE_RESET_DONE 0x102\n#define MTK_WIFI_RESET_DONE 0x103\n#define MTK_WIFI_CHIP_ONLINE 0x104\n#define MTK_WIFI_CHIP_OFFLINE 0x105' "$DRIVER"
           make -j"$(nproc)" || make -j1 V=s
 
-      - name: Verify and collect HY3000 firmware
+      - name: Verify and collect MT7981B NAND firmware
         working-directory: wrt
         run: |
           mkdir -p upload
-          mapfile -t IMAGES < <(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -iname '*philips_hy3000*sysupgrade*' -size +5M)
-          if [ "${#IMAGES[@]}" -eq 0 ]; then
-            echo 'ERROR: no Philips HY3000 sysupgrade image was produced.'
-            find bin/targets/mediatek/filogic -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-            exit 1
-          fi
-          cp -a "${IMAGES[@]}" upload/
-          find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            \( -name '*philips_hy3000*.manifest' -o -name 'sha256sums' -o -name '*.buildinfo' \) \
-            -exec cp -a {} upload/ \;
-          cp "$GITHUB_WORKSPACE/HY3000-final.config" upload/
+          for device in cmcc_rax3000m jcg_q30-pro zbtlink_zbt-z8103ax-c; do
+            mapfile -t images < <(find bin/targets/mediatek/filogic -maxdepth 1 -type f -iname "*${device}*sysupgrade*" -size +5M)
+            if [ "${#images[@]}" -eq 0 ]; then
+              echo "ERROR: no sysupgrade image was produced for ${device}."
+              find bin/targets/mediatek/filogic -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+              exit 1
+            fi
+            cp -a "${images[@]}" upload/
+            find bin/targets/mediatek/filogic -maxdepth 1 -type f -name "*${device}*.manifest" -exec cp -a {} upload/ \;
+          done
+          find bin/targets/mediatek/filogic -maxdepth 1 -type f -name '*.buildinfo' -exec cp -a {} upload/ \;
+          cp "$GITHUB_WORKSPACE/MT7981B-NAND-final.config" upload/
           sha256sum upload/* | tee upload/SHA256SUMS
           ls -lh upload
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Philips-HY3000-24.10-${{ env.BUILD_DATE }}
+          name: MT7981B-NAND-24.10-${{ env.BUILD_DATE }}
           path: wrt/upload/*
           if-no-files-found: error
           retention-days: 30
@@ -187,11 +184,11 @@ jobs:
       - name: Publish firmware release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: HY3000-24.10-${{ env.BUILD_DATE }}
-          name: Philips HY3000 24.10 ${{ env.BUILD_DATE }}
+          tag_name: MT7981B-NAND-24.10-${{ env.BUILD_DATE }}
+          name: MT7981B NAND 24.10 ${{ env.BUILD_DATE }}
           files: wrt/upload/*
           body: |
-            Philips HY3000 eMMC / ImmortalWrt 24.10 / kernel 6.6
+            CMCC RAX3000M NAND / JCG Q30 PRO / ZBT-Z8103AX-C / ImmortalWrt 24.10 / kernel 6.6
             Source commit: ${{ env.WRT_HASH }}
             Management IP: 192.168.7.1
             Wi-Fi: DulWiFi-5G / DulWiFi-2.4G
