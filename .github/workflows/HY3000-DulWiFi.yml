@@ -2,6 +2,9 @@ name: MT7981B-24.10-NAND-iStore-Monitor
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/hy3000-24.10
 
 permissions:
   contents: write
