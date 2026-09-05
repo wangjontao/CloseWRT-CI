@@ -255,8 +255,12 @@ jobs:
           done
           sed -i '/^CONFIG_PACKAGE_luci-app-npc=/d;/^# CONFIG_PACKAGE_luci-app-npc is not set/d' .config
           echo '# CONFIG_PACKAGE_luci-app-npc is not set' >> .config
+          sed -i '/^CONFIG_WARP_VERSION=/d;/^CONFIG_WARP_CHIPSET=/d' .config
+          printf '%s\n' 'CONFIG_WARP_VERSION=2' 'CONFIG_WARP_CHIPSET="mt7981"' 'CONFIG_MTK_WARP_V2=y' 'CONFIG_MTK_WHNAT_SUPPORT=m' >> .config
           make defconfig
 
+          grep -qx 'CONFIG_WARP_VERSION=2' .config
+          grep -qx 'CONFIG_WARP_CHIPSET="mt7981"' .config
           echo '=== selected HY3000 configuration ==='
           grep -E '^CONFIG_TARGET|philips_hy3000|kmod-(mt_wifi|conninfra)|mtwifi-cfg|luci-app-(store|quickstart|ttyd|passwall|passwall2|homeproxy|nps)|argon' .config | head -220
           grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y' .config
@@ -279,7 +283,7 @@ jobs:
         working-directory: wrt
         run: |
           make download -j"$(nproc)"
-          find dl -type f -size -1024c -print -delete
+          # Keep small Go source files in dl/go-mod-cache intact.
 
       - name: Compile firmware
         working-directory: wrt
@@ -292,7 +296,17 @@ jobs:
           DRIVER="$(find build_dir -path '*/drivers/net/ethernet/mediatek/mtk_eth_soc.c' -type f | head -n1)"
           test -n "$DRIVER"
           sed -i '1i#define HIT_BIND_FORCE_TO_CPU 0x1d\n#define MTK_FE_START_RESET 0x100\n#define MTK_FE_RESET_NAT_DONE 0x101\n#define MTK_FE_RESET_DONE 0x102\n#define MTK_WIFI_RESET_DONE 0x103\n#define MTK_WIFI_CHIP_ONLINE 0x104\n#define MTK_WIFI_CHIP_OFFLINE 0x105' "$DRIVER"
-          make -j"$(nproc)" || make -j1 V=s
+          make tools/install -j"$(nproc)"
+          make toolchain/install -j"$(nproc)"
+          make target/linux/compile -j"$(nproc)"
+          make package/mtk/drivers/warp/compile -j1 V=s
+          make package/mtk/drivers/mt_wifi/compile -j1 V=s
+          make package/feeds/packages/sing-box/compile -j1 V=s
+          make package/npc/compile -j1 V=s
+
+      - name: Compile full firmware after critical packages
+        working-directory: wrt
+        run: make -j"$(nproc)" || make -j1 V=s
 
       - name: Verify and collect HY3000 firmware
         working-directory: wrt
