@@ -165,8 +165,6 @@ jobs:
           CONFIG_PACKAGE_kmod-warp=y
           CONFIG_PACKAGE_mtwifi-cfg=y
           CONFIG_PACKAGE_luci-app-mtwifi-cfg=y
-          CONFIG_PACKAGE_luci-app-nps=y
-          # CONFIG_PACKAGE_luci-app-npc is not set
           CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y
           CONFIG_PACKAGE_wifi-scripts=y
           CONFIG_PACKAGE_wifi-dats=y
@@ -241,6 +239,14 @@ jobs:
           sed -i "s#^root:[^:]*:#root:${ROOT_HASH}:#" \
             package/base-files/files/etc/shadow
 
+          # Resolve the proven proprietary Wi-Fi configuration first. Adding a
+          # newly introduced LuCI package in the same Kconfig pass can disturb
+          # the MT7981 choice symbols and silently drop kmod-mt_wifi.
+          make defconfig
+          cat >> .config <<'NPS_EOF'
+          CONFIG_PACKAGE_luci-app-nps=y
+          # CONFIG_PACKAGE_luci-app-npc is not set
+          NPS_EOF
           make defconfig
 
           echo '=== selected HY3000 configuration ==='
