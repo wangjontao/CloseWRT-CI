@@ -1,5 +1,3 @@
 #!/bin/sh
-
-/etc/init.d/npc-wan-mac enable
-/etc/init.d/npc-wan-mac start
+# Deprecated: luci-app-npc was replaced by luci-app-nps.
 exit 0
