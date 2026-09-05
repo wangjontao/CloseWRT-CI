@@ -16,8 +16,8 @@ concurrency:
 env:
   WRT_REPO: https://github.com/Yuzhii0718/immortalwrt-mt798x-6.6-padavanonly.git
   WRT_BRANCH: openwrt-24.10-6.6
-  PASSWALL_TAG: 26.3.5-1
-  PASSWALL2_TAG: 26.3.6-1
+  PASSWALL_TAG: 26.3.6-1
+  PASSWALL2_TAG: 26.3.5-1
   PASSWALL_PACKAGES_COMMIT: 3e11c458c552aefd348232c627fd1ed9f8f08e41
   NPS_OPENWRT_COMMIT: 480f2e502575641a0c9280d6fad971550621316d
 
@@ -338,7 +338,7 @@ jobs:
             Source commit: ${{ env.WRT_HASH }}
             Management IP: 192.168.7.1
             Wi-Fi: DulWiFi-5G / DulWiFi-2.4G
-            PassWall: 26.3.5-1
-            PassWall2: 26.3.6-1
+            PassWall: 26.3.6-1
+            PassWall2: 26.3.5-1
             Included: fixed MT7981 mt_wifi driver, iStore, QuickStart home page, Argon theme, TTYD, common LuCI tools, PassWall, PassWall2, HomeProxy, domain-enabled luci-app-nps client
             NPS client: 47.83.9.208:8024 TCP; domain input is enabled; WAN MAC is used as uppercase vkey without colons.
