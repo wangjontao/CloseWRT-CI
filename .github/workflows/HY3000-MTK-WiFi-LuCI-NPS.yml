@@ -252,10 +252,12 @@ jobs:
             PACKAGE_luci-app-ttyd PACKAGE_luci-app-passwall \
             PACKAGE_luci-app-passwall2 PACKAGE_luci-app-homeproxy \
             PACKAGE_luci-app-nps; do
-            ./scripts/config --enable "$symbol"
+            sed -i "/^CONFIG_${symbol}=/d;/^# CONFIG_${symbol} is not set/d" .config
+            echo "CONFIG_${symbol}=y" >> .config
           done
-          ./scripts/config --disable PACKAGE_luci-app-npc
-          make olddefconfig
+          sed -i '/^CONFIG_PACKAGE_luci-app-npc=/d;/^# CONFIG_PACKAGE_luci-app-npc is not set/d' .config
+          echo '# CONFIG_PACKAGE_luci-app-npc is not set' >> .config
+          make defconfig
 
           echo '=== selected HY3000 configuration ==='
           grep -E '^CONFIG_TARGET|philips_hy3000|kmod-(mt_wifi|conninfra)|mtwifi-cfg|luci-app-(store|quickstart|ttyd|passwall|passwall2|homeproxy|nps)|argon' .config | head -220
