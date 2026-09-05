@@ -2,6 +2,9 @@ name: HY3000-24.10-iStore-QuickStart
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/hy3000-24.10
 
 permissions:
   contents: write
