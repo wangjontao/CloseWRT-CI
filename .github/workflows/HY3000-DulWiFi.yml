@@ -2,9 +2,6 @@ name: HY3000-24.10-iStore-QuickStart
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/hy3000-24.10
 
 permissions:
   contents: write
@@ -81,7 +78,7 @@ jobs:
           ./scripts/feeds install -d y -p nas_packages quickstart
           ./scripts/feeds install -d y -p nas_luci luci-app-quickstart
 
-      - name: Add fixed proxy and NPC packages
+      - name: Add fixed proxy and NPS packages
         working-directory: wrt
         run: |
           rm -rf package/luci-app-passwall package/luci-app-passwall2 \
@@ -110,7 +107,12 @@ jobs:
           git clone https://github.com/djylb/nps-openwrt.git /tmp/nps-openwrt
           git -C /tmp/nps-openwrt checkout "$NPS_OPENWRT_COMMIT"
           cp -a /tmp/nps-openwrt/npc package/
-          cp -a /tmp/nps-openwrt/luci-app-npc package/
+
+          git clone --depth=1 --single-branch --branch openwrt-25.12 \
+            https://github.com/coolsnowwolf/luci.git /tmp/lede-luci
+          cp -a /tmp/lede-luci/applications/luci-app-nps package/
+          # luci-app-nps uses the npc binary but stores settings in /etc/config/nps.
+          # Keep IPv4 support and make the package name/UI match the requested NPS client.
 
           rm -rf package/luci-theme-argon package/luci-app-argon-config
           git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
@@ -119,29 +121,16 @@ jobs:
       - name: Apply HY3000 iStore QuickStart configuration and defaults
         working-directory: wrt
         run: |
-          rm -f .config
-          cat "$GITHUB_WORKSPACE/Config/HY3000.txt" \
-              "$GITHUB_WORKSPACE/Config/PRIVATE.txt" \
-              "$GITHUB_WORKSPACE/Config/HY3000-iStore-QuickStart.txt" > .config
+          # Start from the source tree's matched MT7981 vendor configuration. This keeps
+          # WARP register headers, driver generation and firmware generation consistent.
+          test -f defconfig/mt7981-ax3000.config
+          cp defconfig/mt7981-ax3000.config .config
+          sed -E '/^(CONFIG_|# CONFIG_)(first_card|MTK_|WARP_|CONNINFRA_|WED_)/d' \
+            "$GITHUB_WORKSPACE/Config/HY3000.txt" >> .config
+          cat "$GITHUB_WORKSPACE/Config/PRIVATE.txt" \
+              "$GITHUB_WORKSPACE/Config/HY3000-iStore-QuickStart.txt" >> .config
 
           cat >> .config <<'WIFI_EOF'
-          CONFIG_first_card=y
-          CONFIG_first_card_name="MT7981"
-          CONFIG_MTK_CHIP_MT7981=y
-          CONFIG_MTK_CONNINFRA_APSOC=y
-          CONFIG_MTK_CONNINFRA_APSOC_MT7981=y
-          CONFIG_MTK_FIRST_IF_MT7981=y
-          CONFIG_MTK_MT7981_NEW_FW=n
-          CONFIG_MTK_MT_AP_SUPPORT=m
-          CONFIG_MTK_MT_WIFI=m
-          CONFIG_MTK_MT_WIFI_PATH="mt_wifi"
-          CONFIG_MTK_WIFI_BASIC_FUNC=y
-          CONFIG_MTK_WIFI_DRIVER=y
-          CONFIG_MTK_WIFI_MODE_AP=m
-          CONFIG_MTK_WIFI_MT_MAC=y
-          CONFIG_MTK_SUPPORT_OPENWRT=y
-          CONFIG_MTK_WIFI_FW_BIN_LOAD=y
-          CONFIG_MTK_WLAN_SERVICE=y
           CONFIG_PACKAGE_kmod-conninfra=y
           CONFIG_PACKAGE_kmod-mt_wifi=y
           CONFIG_PACKAGE_kmod-warp=y
@@ -155,10 +144,10 @@ jobs:
           WIFI_EOF
 
           cp -a "$GITHUB_WORKSPACE/Files/." package/base-files/files/
-          chmod 0755 package/base-files/files/etc/init.d/npc-wan-mac
+          chmod 0755 package/base-files/files/etc/init.d/nps-wan-mac
           chmod 0755 package/base-files/files/etc/uci-defaults/99-dulwifi
-          chmod 0755 package/base-files/files/etc/uci-defaults/99-enable-npc-wan-mac
-          chmod 0755 package/base-files/files/usr/libexec/npc-wan-mac
+          chmod 0755 package/base-files/files/etc/uci-defaults/99-enable-nps-wan-mac
+          chmod 0755 package/base-files/files/usr/libexec/nps-wan-mac
 
           sed -i "s/192\\.168\\.[0-9]*\\.[0-9]*/192.168.7.1/g" \
             package/base-files/files/bin/config_generate
@@ -186,7 +175,8 @@ jobs:
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall2=y' .config
           grep -q '^CONFIG_PACKAGE_luci-app-homeproxy=y' .config
-          grep -q '^CONFIG_PACKAGE_luci-app-npc=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-nps=y' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-npc=y' .config && { echo 'ERROR: luci-app-npc must not be included.'; exit 1; } || true
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/HY3000-iStore-QuickStart-final.config"
 
       - name: Download sources
@@ -225,6 +215,8 @@ jobs:
           grep -q '^kmod-mt_wifi ' "${manifests[0]}" || { echo 'ERROR: kmod-mt_wifi is missing from HY3000 firmware.'; exit 1; }
           grep -q '^kmod-conninfra ' "${manifests[0]}" || { echo 'ERROR: kmod-conninfra is missing from HY3000 firmware.'; exit 1; }
           grep -q '^mtwifi-cfg ' "${manifests[0]}" || { echo 'ERROR: mtwifi-cfg is missing from HY3000 firmware.'; exit 1; }
+          grep -q '^luci-app-nps ' "${manifests[0]}" || { echo 'ERROR: luci-app-nps is missing from HY3000 firmware.'; exit 1; }
+          if grep -q '^luci-app-npc ' "${manifests[0]}"; then echo 'ERROR: luci-app-npc is still present.'; exit 1; fi
           cp -a "${manifests[@]}" upload/
           find bin/targets/mediatek/filogic -maxdepth 1 -type f -name '*.buildinfo' -exec cp -a {} upload/ \;
           cp "$GITHUB_WORKSPACE/HY3000-iStore-QuickStart-final.config" upload/
@@ -252,5 +244,5 @@ jobs:
             Wi-Fi: DulWiFi-5G / DulWiFi-2.4G
             PassWall: 26.3.6-1
             PassWall2: 26.3.5-1
-            Included: fixed MT7981 mt_wifi driver, iStore, QuickStart home page, Argon theme, TTYD, common LuCI tools, PassWall, PassWall2, HomeProxy, luci-app-npc
-            NPC: nps.jontao.top:8024; WAN MAC is used as uppercase vkey without colons.
+            Included: fixed MT7981 mt_wifi driver, iStore, QuickStart home page, Argon theme, TTYD, common LuCI tools, PassWall, PassWall2, HomeProxy, luci-app-nps
+            NPS: 47.83.9.208:8024; first boot writes the uppercase WAN MAC without colons to vkey.
