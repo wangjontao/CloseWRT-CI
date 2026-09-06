@@ -6,6 +6,15 @@ name: CWRT-ALL
 
 #CI计划
 on:
+  # 修改本工作流或编译配置后自动验证编译
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/CWRT-ALL.yml'
+      - '.github/workflows/WRT-CORE.yml'
+      - 'Config/**'
+      - 'Scripts/**'
   #手动编译
   workflow_dispatch:
     inputs:
