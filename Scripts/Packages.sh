@@ -53,12 +53,25 @@ UPDATE_PACKAGE "aurora-config" "eamonxg/luci-app-aurora-config" "master"
 #UPDATE_PACKAGE "kucat" "sirpdboy/luci-theme-kucat" "master"
 #UPDATE_PACKAGE "kucat-config" "sirpdboy/luci-app-kucat-config" "master"
 
-#UPDATE_PACKAGE "homeproxy" "VIKINGYFY/homeproxy" "main"
+UPDATE_PACKAGE "homeproxy" "immortalwrt/homeproxy" "master"
 #UPDATE_PACKAGE "momo" "nikkinikki-org/OpenWrt-momo" "main"
 UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
-#UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
-#UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
-#UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
+UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
+UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "26.3.6-1" "pkg"
+UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "26.3.5-1" "pkg"
+
+# PassWall 运行依赖
+rm -rf ./openwrt-passwall-packages
+git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
+
+# NPS 客户端及 LuCI 界面
+rm -rf ./npc ./luci-app-nps /tmp/nps-openwrt /tmp/lean-luci
+git clone --depth=1 https://github.com/djylb/nps-openwrt.git /tmp/nps-openwrt
+cp -a /tmp/nps-openwrt/npc ./
+git clone --depth=1 --filter=blob:none --sparse https://github.com/coolsnowwolf/luci.git /tmp/lean-luci
+git -C /tmp/lean-luci sparse-checkout set applications/luci-app-nps
+cp -a /tmp/lean-luci/applications/luci-app-nps ./
+sed -i 's#include ../../luci.mk#include $(TOPDIR)/feeds/luci/luci.mk#' ./luci-app-nps/Makefile
 
 #UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
 
